@@ -5,3 +5,5 @@
 		heading.innerText+=" World!"
 	}
 )
+////
+(document)
