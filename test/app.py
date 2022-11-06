@@ -10,7 +10,7 @@ document = domapi.make_document_from_str(
 document._exec_js_dom_func(
 	open("js/index.js", 'r')
 		.read()
-			.split("////")[0]
+			.rsplit("////", 1)[0]
 )
 
 heading = document.getElementById("myheading")
@@ -33,29 +33,26 @@ script.innerText = """
 const runasync = 
 	(func) => setTimeout(func, 0)
 
-const a = 
-	() => {
+document.querySelector("button[name='clickity']")
+	.onclick = () => {
 		runasync(() => window.alert("button clicked!"))
 		
 		const p = document.getElementById("p2")
 		
-		if (p.innerText == "cool")
-			p.innerText = "wow"
+		if (p.textContent == "cool")
+			p.textContent = "wow"
 		else
-			p.innerText = "cool"
+			p.textContent = "cool"
 	}
 """
 
-script.attributes.setNamedItem(
-	document.createAttribute("defer")
-)
-
-document.head.append(
+document.body.append(
 	script
 )
 
 if app.debug:
 	print(document._stringify())
+	print(document.querySelectorAll('p.my-text-class#p2[style="color: red;"]'))
 
 @app.route('/')
 def index():

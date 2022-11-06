@@ -5,19 +5,15 @@ NOTE: Not all classes, such as `Node`, are implemented.
 """
 
 import json
+import lxml.etree as xml
+from cssselect import GenericTranslator as _SelectorTranslator, SelectorError as MalformedSelector
 from types import MethodType
 from js2py import eval_js as _js_eval
 from js2py.base import JsObjectWrapper as _JSObject
 from htmlmin import minify as _minify
-import lxml.etree as xml # see docs, doesn't protect against malicious data (last reg xml lib)
-
-class WebAPIClassBase:
-	"""Interface for all WebAPI Objects."""
-	def __init__(self, prototype: dict):
-		self.__dict__ = prototype
-
-	def _dict(self):
-		return self.__dict__
+from . import WebAPIClassBase
+from .attrs import NamedNodeMap, Attr
+from .xpath import XPathExpression, XPathResult
 
 class Element(WebAPIClassBase):
 	"""A singular HTML element."""
@@ -119,6 +115,18 @@ class Element(WebAPIClassBase):
 				continue
 
 			self._root.append(
+				xml.fromstring(item)
+			)
+
+	def prepend(self, *items):
+		"""Add elements before this element's current children"""
+		for item in items:
+			if isinstance(item, Element):
+				self._root.insert(0, item._root)
+				continue
+
+			self._root.insert(
+				0,
 				xml.fromstring(item)
 			)
 
@@ -281,6 +289,33 @@ class Document(Element):
 			res = child._getElementById_Helper(id)
 			if res is not None: return res
 
+	def querySelector(self, query: str) -> Element:
+		"""Return the first element in the document that matches all the criteria in `query`."""
+
+		selected = self.querySelectorAll(query)
+
+		return selected[0] if selected else None
+
+	def querySelectorAll(self, query: str) -> list[Element]:
+		"""Return all elements in the document that match all the criteria in `query`."""
+		
+		try: expr = _SelectorTranslator().css_to_xpath(query)
+		except MalformedSelector: return []
+
+
+		return list(self._root.xpath(expr))
+
+	def createExpression(self, query: str) -> XPathExpression:
+		"""Return an XPathExpression based of of `query`."""
+
+		return XPathExpression(query)
+
+	def evaluate(self, xpath_expr: XPathExpression, context_node: Element, namespace_resolver: None, result_type: int, result: XPathResult):
+		"""Evaluate the XPath expression `xpath_expr`. Note that `namespace_resolver` is actually never called."""
+		
+		return xpath_expr.evaluate(context_node, result_type, result)
+
+
 	def createElement(self, tagname, options: dict={ "is": str }) -> Element:
 		"""Return a new `Element` with `tagname` and `options`."""
 		html = f"<{tagname}></{tagname}>" if options.get("is", str) is str else f'<{tagname} is="{options["is"]}"></{tagname}>'
@@ -318,73 +353,4 @@ class Document(Element):
 	def __repr__(self):
 		return "Document"
 
-class Attr(WebAPIClassBase):
-	def __init__(self, name: str):
-		self._name = name
-		self._owner = None
-		self._value = ""
 
-	@property
-	def localName(self): return self._name
-
-	@property
-	def name(self): return self._name
-
-	@property
-	def ownerElement(self): return self._owner
-
-	@property
-	def value(self) -> str:
-		return self._value
-
-	@value.setter
-	def value(self, val: str):
-		self._value = val
-
-	def _dict(self): return { "name": self.name, "value": self.value }
-	
-	def __repr__(self):
-		return json.dumps(
-			self._dict()
-		)
-
-class NamedNodeMap(WebAPIClassBase):
-	def __init__(self, map: dict[str, Attr], owner: Element):
-		self._owner = owner
-		self._map = map
-
-	@property
-	def length(self):
-		"""Return the length of the map (the number of attributes)."""
-		return len(self._map)
-
-	def getNamedItem(self, name: str):
-		"""Return the `Attr` object with the name `name`."""
-		return self._map.get(
-			name,
-			None
-		)
-
-	def setNamedItem(self, attr: Attr):
-		"""Set the attribute `attr` on this map."""
-		self._map[attr.name] = attr
-		attr._owner = self._owner
-		self._owner._root.attrib[attr.name] = attr.value
-
-	def removeNamedItem(self, name: str):
-		"""Pop the attribute with the name `name`."""
-		if name in self._map:
-			self._map[name].ownerElement._root.attrib.pop(name)
-
-		return self._map.pop(name, None)
-
-	def item(self, idx: int):
-		"""Get the attribute at index `idx`."""
-		return tuple(self._map.values())[idx] if idx <= self.length else None
-
-	def _dict(self): return { key: value._dict() for key, value in self._map.items() }
-
-	def __repr__(self):
-		return json.dumps(
-			self._dict()
-		)
