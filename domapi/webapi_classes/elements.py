@@ -5,19 +5,21 @@ NOTE: Not all classes, such as `Node`, are implemented.
 """
 
 import json
-import lxml.etree as xml
+import lxml.html as html
+import warnings
 from cssselect import GenericTranslator as _SelectorTranslator, SelectorError as MalformedSelector
 from types import MethodType
-from js2py import eval_js as _js_eval
-from js2py.base import JsObjectWrapper as _JSObject
 from htmlmin import minify as _minify
 from . import WebAPIClassBase
 from .attrs import NamedNodeMap, Attr
 from .xpath import XPathExpression, XPathResult
 
+class DOMException(Exception): pass
+class HierarchyRequestError(DOMException): pass
+
 class Element(WebAPIClassBase):
 	"""A singular HTML element."""
-	def __init__(self, root: xml._Element):
+	def __init__(self, root: html.HtmlElement):
 		self._root = root
 		self._attrib = NamedNodeMap({}, self)
 		
@@ -67,12 +69,45 @@ class Element(WebAPIClassBase):
 
 	@property
 	def innerText(self):
-		"""Get the text from an element."""
-		return self._root.text
+		"""Get the text inside this element."""
+		warnings.warn(
+			"This property currently yields more or less the same output as Element.textContent - "
+			"may lead to code breaks!",
+			UserWarning
+		)
+		return ''.join(self._root.itertext())
 
-	@innerText.setter
-	def innerText(self, value: str):
-		self._root.text = value
+	@property
+	def textContent(self) -> str:
+		"""All the text in this element."""
+		return self._root.text_content()
+
+	@textContent.setter
+	def textContent(self, text: str):
+		self._clear()
+		self._root.text = text
+
+	@property
+	def innerHTML(self) -> str:
+		"""Get the HTML inside of this element"""
+
+		descendants = list(self._root.iterchildren())
+
+		for i, descendant in enumerate(descendants):
+			if isinstance(descendant, html.HtmlElement):
+				descendants[i] = Element(descendant)._stringify()
+
+		return (self._root.text if self._root.text else "")+''.join(descendants)+(self._root.tail if self._root.tail else "")
+				
+	@innerHTML.setter
+	def innerHTML(self, new_html: str):
+		self._clear()
+
+		for element in html.fromstring(new_html).iterchildren():
+			self._root.append(element)
+
+	def _clear(self):
+		for child in self._root.iterchildren(): self._root.remove(child)
 
 	def getAttribute(self, name: str) -> str:
 		"""Get the value of an attribute."""
@@ -102,6 +137,22 @@ class Element(WebAPIClassBase):
 				elems.append(child)
 
 		return elems
+	
+	def querySelector(self, query: str):
+		"""Return the first element in the document that matches all the criteria in `query`."""
+
+		selected = self.querySelectorAll(query)
+
+		return selected[0] if selected else None
+
+	def querySelectorAll(self, query: str):
+		"""Return all elements in the document that match all the criteria in `query`."""
+		
+		try: expr = _SelectorTranslator().css_to_xpath(query)
+		except MalformedSelector: return []
+
+
+		return [Element(elem) for elem in self._root.xpath(expr)]
 
 	def _getElementById_Helper(self, id: str):
 		for child in self.children:
@@ -115,7 +166,7 @@ class Element(WebAPIClassBase):
 				continue
 
 			self._root.append(
-				xml.fromstring(item)
+				html.fromstring(item)
 			)
 
 	def prepend(self, *items):
@@ -127,11 +178,11 @@ class Element(WebAPIClassBase):
 
 			self._root.insert(
 				0,
-				xml.fromstring(item)
+				html.fromstring(item)
 			)
 
 	def _stringify(self) -> str:
-		return xml.tostring(self._root, method="html").decode()
+		return html.tostring(self._root).decode()
 
 	def _minify(self, **kwargs) -> str:
 		"""This function is like Element._stringify() except that it uses htmlmin.minify() under the hood. Kwargs can be supplied to htmlmin.minifiy().
@@ -151,7 +202,7 @@ class Element(WebAPIClassBase):
 			**{
 				key: json.loads(str(value)) 
 				for key, value in self.__dict__.items() 
-				if (not key.startswith('_')) and (type(value) is not _JSObject)
+				if (not key.startswith('_'))
 			},
 			**{
 				key : json.loads(
@@ -181,11 +232,6 @@ class Element(WebAPIClassBase):
 				for key in self.__class__.__dict__
 				if (not key.startswith('_') and type(getattr(self, key)) is MethodType)
 			},
-			**{
-				key: eval(str(value))
-				for key, value in self.__dict__.items()
-				if type(value) is _JSObject
-			}
 		}
 
 	def __str__(self) -> str:
@@ -196,7 +242,7 @@ class Element(WebAPIClassBase):
 
 class Document(Element):
 	"""Document object that supports most DOM manipulation functions and properties. Deprecated, less documented, and minimally used features such as `document.implementation` are not implemented. Features that a browser would support, like event listeners, are also not implemented."""
-	def __init__(self, root: xml._Element):
+	def __init__(self, root: html.HtmlElement):
 		self._root = root
 
 	@property
@@ -247,7 +293,7 @@ class Document(Element):
 	@property
 	def metadata(self) -> dict:
 		"""Non-standard property that returns a dict of the attributes in the `<meta>` element."""
-		return Element(self._root.get("meta", xml.Element("meta"))).attributes._map
+		return Element(self._root.get("meta", html.Element("meta"))).attributes._map
 
 	@property
 	def characterSet(self) -> str: # make setter for this charset
@@ -264,7 +310,7 @@ class Document(Element):
 	@property
 	def childElementCount(self):
 		"""Like I don't know that there is only one child..."""
-		return 1
+		return len(self.children)
 	
 	@property
 	def documentElement(self):
@@ -289,22 +335,6 @@ class Document(Element):
 			res = child._getElementById_Helper(id)
 			if res is not None: return res
 
-	def querySelector(self, query: str) -> Element:
-		"""Return the first element in the document that matches all the criteria in `query`."""
-
-		selected = self.querySelectorAll(query)
-
-		return selected[0] if selected else None
-
-	def querySelectorAll(self, query: str) -> list[Element]:
-		"""Return all elements in the document that match all the criteria in `query`."""
-		
-		try: expr = _SelectorTranslator().css_to_xpath(query)
-		except MalformedSelector: return []
-
-
-		return list(self._root.xpath(expr))
-
 	def createExpression(self, query: str) -> XPathExpression:
 		"""Return an XPathExpression based of of `query`."""
 
@@ -318,11 +348,11 @@ class Document(Element):
 
 	def createElement(self, tagname, options: dict={ "is": str }) -> Element:
 		"""Return a new `Element` with `tagname` and `options`."""
-		html = f"<{tagname}></{tagname}>" if options.get("is", str) is str else f'<{tagname} is="{options["is"]}"></{tagname}>'
+		htmlstr = f"<{tagname}></{tagname}>" if options.get("is", str) is str else f'<{tagname} is="{options["is"]}"></{tagname}>'
 
 		return Element(
-			xml.fromstring(
-				html
+			html.fromstring(
+				htmlstr
 			)
 		)
 
@@ -333,22 +363,29 @@ class Document(Element):
 
 	def open(self):
 		"""Not really sure what this is for so this just clears the document."""
-		self._root = xml.fromstring("")
+		self._root = None
 
 	def write(self, string: str):
 		"""Pretty dumb method if you ask me - it just overwrites the entire document."""
 		self.open()
-		self._root = xml.fromstring(string)
+		self._root = html.fromstring(string)
 
-	def _exec_js_dom_func(self, func: str, *args):
-		"""Pass in a string containing an ES5 anonymous function that accepts a document object and *args"""
-	
-		func = _js_eval(func)
+	def append(self, *items):
+		"""LOL - this function always throws an error!"""
+		
+		if self._root:
+			raise HierarchyRequestError("Cannot append another child to the document.")
 
-		return func(
-			self,
-			*args
-		)
+		raise DOMException("Cannot append nodes to the document. Use document.write instead.")
+
+	def prepend(self, *items):
+		"""LOL - this function always throws an error!"""
+
+		if self._root:
+			raise HierarchyRequestError("Cannot prepend another child to the document.")
+
+		
+		raise DOMException("Cannot prepend nodes to the document. Use document.write instead.")
 
 	def __repr__(self):
 		return "Document"

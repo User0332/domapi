@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools >= 61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domapi"
+version = "1.0.0"
+description = "Modify and access an HTML document with a JavaScript-like API"
+readme = "README.md"
+authors = [{ name="Carl Furtado", email="carlzfurtado@gmail.com"}]
+license = { file="LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Text Processing :: Markup :: HTML"
+]
+
+keywords = ["javascript", "dom", "document", "document object model", "html"]
+dependencies = [
+    "lxml >= 4.9.0",
+    "cssselect >= 1.2.0",
+    "htmlmin >= 0.1.12"
+]
+
+requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://github.com/User0332/domapi"
